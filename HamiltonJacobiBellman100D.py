@@ -1,10 +1,11 @@
 """
 @author: Maziar Raissi
+Modified for TensorFlow 2
 """
 
 import numpy as np
 import tensorflow as tf
-from FBSNNs import FBSNN
+from FBSNNs import FBSNN  
 import matplotlib.pyplot as plt
 from plotting import newfig, savefig
 
@@ -18,10 +19,10 @@ class HamiltonJacobiBellman(FBSNN):
                          layers)
     
     def phi_tf(self, t, X, Y, Z): # M x 1, M x D, M x 1, M x D
-        return tf.reduce_sum(Z**2, 1, keepdims = True) # M x 1
+        return tf.reduce_sum(Z**2, axis=1, keepdims=True) # M x 1
     
     def g_tf(self, X): # M x D
-        return tf.log(0.5 + 0.5*tf.reduce_sum(X**2, 1, keepdims = True)) # M x 1
+        return tf.log(0.5 + 0.5*tf.reduce_sum(X**2, axis=1, keepdims=True)) # M x 1
 
     def mu_tf(self, t, X, Y, Z): # M x 1, M x D, M x 1, M x D
         return super().mu_tf(t, X, Y, Z) # M x D

@@ -1,5 +1,6 @@
 """
 @author: Maziar Raissi
+Modified for TensorFlow 2 by Meng
 """
 
 import numpy as np
@@ -21,7 +22,7 @@ class AllenCahn(FBSNN):
         return - Y + Y**3 # M x 1
     
     def g_tf(self, X):
-        return 1.0/(2.0 + 0.4*tf.reduce_sum(X**2, 1, keepdims = True))
+        return 1.0/(2.0 + 0.4*tf.reduce_sum(X**2, axis=1, keepdims=True))
 
     def mu_tf(self, t, X, Y, Z): # M x 1, M x D, M x 1, M x D
         return super().mu_tf(t, X, Y, Z) # M x D
@@ -59,7 +60,7 @@ if __name__ == "__main__":
     
     samples = 5
     
-    Y_test_terminal = 1.0/(2.0 + 0.4*np.sum(X_pred[:,-1,:]**2, 1, keepdims = True))
+    Y_test_terminal = 1.0/(2.0 + 0.4*np.sum(X_pred[:,-1,:]**2, axis=1, keepdims=True))
     
     plt.figure()
     plt.plot(t_test[0,:,0].T,Y_pred[0,:,0].T,'b',label='Learned $u(t,X_t)$')

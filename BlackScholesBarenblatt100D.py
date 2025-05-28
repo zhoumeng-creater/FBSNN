@@ -1,10 +1,11 @@
 """
 @author: Maziar Raissi
+Modified for TensorFlow 2 by Meng
 """
 
 import numpy as np
 import tensorflow as tf
-from FBSNNs import FBSNN
+from FBSNNs import FBSNN  
 import matplotlib.pyplot as plt
 from plotting import newfig, savefig
 
@@ -18,16 +19,16 @@ class BlackScholesBarenblatt(FBSNN):
                          layers)
                
     def phi_tf(self, t, X, Y, Z): # M x 1, M x D, M x 1, M x D
-        return 0.05*(Y - tf.reduce_sum(X*Z, 1, keepdims = True)) # M x 1
+        return 0.05*(Y - tf.reduce_sum(X*Z, axis=1, keepdims=True)) # M x 1
     
     def g_tf(self, X): # M x D
-        return tf.reduce_sum(X**2, 1, keepdims = True) # M x 1
+        return tf.reduce_sum(X**2, axis=1, keepdims=True) # M x 1
 
     def mu_tf(self, t, X, Y, Z): # M x 1, M x D, M x 1, M x D
         return super().mu_tf(t, X, Y, Z) # M x D
         
     def sigma_tf(self, t, X, Y): # M x 1, M x D, M x 1
-        return 0.4*tf.matrix_diag(X) # M x D x D
+        return 0.4*tf.linalg.diag(X) # M x D x D
     
     ###########################################################################
 
@@ -61,7 +62,7 @@ if __name__ == "__main__":
     def u_exact(t, X): # (N+1) x 1, (N+1) x D
         r = 0.05
         sigma_max = 0.4
-        return np.exp((r + sigma_max**2)*(T - t))*np.sum(X**2, 1, keepdims = True) # (N+1) x 1
+        return np.exp((r + sigma_max**2)*(T - t))*np.sum(X**2, axis=1, keepdims=True) # (N+1) x 1
         
     Y_test = np.reshape(u_exact(np.reshape(t_test[0:M,:,:],[-1,1]), np.reshape(X_pred[0:M,:,:],[-1,D])),[M,-1,1])
     
