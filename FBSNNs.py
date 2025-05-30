@@ -25,9 +25,8 @@ class FBSNN(ABC): # Forward-Backward Stochastic Neural Network
         
         # initialize NN
         self.weights, self.biases = self.initialize_NN(layers)
-        
         # optimizer
-        self.optimizer = tf.keras.optimizers.Adam()
+        self.optimizer = tf.keras.optimizers.Adam(learning_rate=1e-3)
         
         # Convert Xi to tensor
         self.Xi_tensor = tf.constant(self.Xi, dtype=tf.float32)
@@ -81,12 +80,12 @@ class FBSNN(ABC): # Forward-Backward Stochastic Neural Network
     
     @tf.function
     def loss_function(self, t, W, Xi): # M x (N+1) x 1, M x (N+1) x D, 1 x D
-        loss = 0.0
+        loss = tf.constant(0., tf.float32)
         X_list = []
         Y_list = []
         
         t0 = t[:,0,:]
-        W0 = W[:,0,:]
+        W0 = W[:,0,:]   
         X0 = tf.tile(Xi,[self.M,1]) # M x D
         Y0, Z0 = self.net_u(t0,X0) # M x 1, M x D
         
@@ -96,8 +95,14 @@ class FBSNN(ABC): # Forward-Backward Stochastic Neural Network
         for n in range(0,self.N):
             t1 = t[:,n+1,:]
             W1 = W[:,n+1,:]
-            X1 = X0 + self.mu_tf(t0,X0,Y0,Z0)*(t1-t0) + tf.squeeze(tf.matmul(self.sigma_tf(t0,X0,Y0),tf.expand_dims(W1-W0,-1)), axis=[-1])
-            Y1_tilde = Y0 + self.phi_tf(t0,X0,Y0,Z0)*(t1-t0) + tf.reduce_sum(Z0*tf.squeeze(tf.matmul(self.sigma_tf(t0,X0,Y0),tf.expand_dims(W1-W0,-1))), axis=1, keepdims = True)
+            sigma = self.sigma_tf(t0, X0, Y0)
+            dW = tf.expand_dims(W1 - W0, -1)
+            X1 = X0 + self.mu_tf(t0, X0, Y0, Z0) * (t1 - t0) + tf.squeeze(tf.matmul(sigma, dW), axis=[-1])
+
+            Y1_tilde = Y0 + self.phi_tf(t0, X0, Y0, Z0) * (t1 - t0) \
+                        + tf.reduce_sum(
+                            Z0 * tf.squeeze(tf.matmul(sigma, dW), axis=[-1]),
+                            axis=1, keepdims=True)
             Y1, Z1 = self.net_u(t1,X1)
             
             loss += tf.reduce_sum(tf.square(Y1 - Y1_tilde))
@@ -127,6 +132,7 @@ class FBSNN(ABC): # Forward-Backward Stochastic Neural Network
             loss, X_pred, Y_pred, Y0_pred = self.loss_function(t_batch, W_batch, Xi)
         
         grads = tape.gradient(loss, trainable_vars)
+        grads, _ = tf.clip_by_global_norm(grads, 10.0)  #防止梯度爆炸
         self.optimizer.learning_rate.assign(learning_rate)
         self.optimizer.apply_gradients(zip(grads, trainable_vars))
         
@@ -145,15 +151,17 @@ class FBSNN(ABC): # Forward-Backward Stochastic Neural Network
         dt = T/N
         
         Dt[:,1:,:] = dt
-        DW[:,1:,:] = np.sqrt(dt)*np.random.normal(size=(M,N,D))
+        DW[:, 1:, :] = np.sqrt(dt) * np.random.normal(size=(M, N, D)).astype(np.float32)    #采样时直接生成 float32
         
         t = np.cumsum(Dt,axis=1) # M x (N+1) x 1
         W = np.cumsum(DW,axis=1) # M x (N+1) x D
         
         return t, W
     
-    def train(self, N_Iter, learning_rate):
-        
+    def train(self, N_Iter, learning_rate, optimizer=None):
+        if optimizer is not None:
+            self.optimizer = optimizer
+            
         start_time = time.time()
         for it in range(N_Iter):
             

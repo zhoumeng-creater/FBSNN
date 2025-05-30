@@ -8,6 +8,7 @@ import tensorflow as tf
 from FBSNNs import FBSNN
 import matplotlib.pyplot as plt
 from plotting import newfig, savefig
+import os, random
 
 class AllenCahn(FBSNN):
     def __init__(self, Xi, T,
@@ -43,7 +44,12 @@ if __name__ == "__main__":
 
     T = 0.3
     Xi = np.zeros([1,D])
-         
+    SEED = 42
+    np.random.seed(SEED)
+    tf.random.set_seed(SEED)
+    random.seed(SEED)
+    os.environ["PYTHONHASHSEED"] = str(SEED)
+
     # Training
     model = AllenCahn(Xi, T,
                       M, N, D,
@@ -63,6 +69,8 @@ if __name__ == "__main__":
     Y_test_terminal = 1.0/(2.0 + 0.4*np.sum(X_pred[:,-1,:]**2, axis=1, keepdims=True))
     
     plt.figure()
+    t_test_np, Y_pred_np = (x.numpy() if tf.is_tensor(x) else x
+                        for x in (t_test, Y_pred))
     plt.plot(t_test[0,:,0].T,Y_pred[0,:,0].T,'b',label='Learned $u(t,X_t)$')
     plt.plot(t_test[1:samples,:,0].T,Y_pred[1:samples,:,0].T,'b')
     plt.plot(t_test[0:samples,-1,0],Y_test_terminal[0:samples,0],'ks',label='$Y_T = u(T,X_T)$')

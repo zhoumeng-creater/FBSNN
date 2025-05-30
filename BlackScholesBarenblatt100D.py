@@ -42,16 +42,17 @@ if __name__ == "__main__":
 
     Xi = np.array([1.0,0.5]*int(D/2))[None,:]
     T = 1.0
+    opt = tf.keras.optimizers.Adam(1e-3)    #防止学习率更新不生效，添加一个优化器
          
     # Training
     model = BlackScholesBarenblatt(Xi, T,
                                    M, N, D,
                                    layers)
     
-    model.train(N_Iter = 2*10**4, learning_rate=1e-3)
-    model.train(N_Iter = 3*10**4, learning_rate=1e-4)
-    model.train(N_Iter = 3*10**4, learning_rate=1e-5)
-    model.train(N_Iter = 2*10**4, learning_rate=1e-6)
+    model.train(N_Iter = 2*10**4, learning_rate=1e-3, optimizer=opt)    #显式接收一个Optimizer 参数；
+    model.train(N_Iter = 3*10**4, learning_rate=1e-4, optimizer=opt)    #在主程序里按阶段创建新优化器
+    model.train(N_Iter = 3*10**4, learning_rate=1e-5, optimizer=opt)
+    model.train(N_Iter = 2*10**4, learning_rate=1e-6, optimizer=opt)
     
     ##### PLOT RESULTS
     

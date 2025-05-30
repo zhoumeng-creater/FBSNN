@@ -32,10 +32,7 @@ pgf_with_latex = {                      # setup matplotlib to use latex for outp
     "xtick.labelsize": 8,
     "ytick.labelsize": 8,
     "figure.figsize": figsize(1.0),     # default fig size of 0.9 textwidth
-    "pgf.preamble": [
-        r"\usepackage[utf8x]{inputenc}",    # use utf8 fonts becasue your computer can handle it :)
-        r"\usepackage[T1]{fontenc}",        # plots will be generated using this preamble
-        ]
+    "pgf.preamble": r"\usepackage[utf8]{inputenc}\n\usepackage[T1]{fontenc}",   #matplotlib 3.8之后不接受列表，只接受字符串
     }
 mpl.rcParams.update(pgf_with_latex)
 

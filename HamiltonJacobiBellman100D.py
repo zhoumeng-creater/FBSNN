@@ -22,7 +22,8 @@ class HamiltonJacobiBellman(FBSNN):
         return tf.reduce_sum(Z**2, axis=1, keepdims=True) # M x 1
     
     def g_tf(self, X): # M x D
-        return tf.log(0.5 + 0.5*tf.reduce_sum(X**2, axis=1, keepdims=True)) # M x 1
+        x2 = tf.reduce_sum(tf.square(X), axis=1, keepdims=True)          # ||X||²
+        return tf.math.log1p(0.5 * x2 - 0.5)                             # log(1 + 0.5||X||² - 0.5); M x 1
 
     def mu_tf(self, t, X, Y, Z): # M x 1, M x D, M x 1, M x D
         return super().mu_tf(t, X, Y, Z) # M x D
@@ -34,6 +35,8 @@ class HamiltonJacobiBellman(FBSNN):
 
 
 if __name__ == "__main__":
+    np.random.seed(123)
+    tf.random.set_seed(123)
     
     M = 100 # number of trajectories (batch size)
     N = 50 # number of time snapshots
@@ -41,7 +44,7 @@ if __name__ == "__main__":
     
     layers = [D+1] + 4*[256] + [1]
 
-    Xi = np.zeros([1,D])
+    Xi = np.zeros([1,D], dtype=np.float32)
     T = 1.0
          
     # Training
@@ -68,8 +71,10 @@ if __name__ == "__main__":
         
         W = np.random.normal(size=(MC,NC,D)) # MC x NC x D
         
-        return -np.log(np.mean(np.exp(-g(X + np.sqrt(2.0*np.abs(T-t))*W)),axis=0))
-    
+        A = -g(X + np.sqrt(2.0 * np.abs(T - t)) * W)           # MC × NC × 1
+        A_max = np.max(A, axis=0, keepdims=True)               # NC × 1 做基准
+        return -(np.log(np.mean(np.exp(A - A_max), axis=0)) + A_max[0]) #防止大数溢出（本处为AI建议）
+        
     Y_test = u_exact(t_test[0,:,:], X_pred[0,:,:])
     
     Y_test_terminal = np.log(0.5 + 0.5*np.sum(X_pred[:,-1,:]**2, axis=1, keepdims=True))
@@ -88,8 +93,9 @@ if __name__ == "__main__":
     
     # savefig('./figures/HJB_Apr18_50', crop = False)
     
-    errors = np.sqrt((Y_test-Y_pred[0,:,:])**2/Y_test**2)
-    
+    denom  = np.maximum(np.abs(Y_test), 1e-12)
+    errors = np.abs(Y_test - Y_pred[0,:,:]) / denom   #原式相对误差分母若接近 0 会爆炸（此处为AI建议）
+
     plt.figure()
     plt.plot(t_test[0,:,0],errors,'b')
     plt.xlabel('$t$')
