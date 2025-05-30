@@ -79,5 +79,7 @@ if __name__ == "__main__":
     plt.ylabel('$Y_t = u(t,X_t)$')
     plt.title('20-dimensional Allen-Cahn')
     plt.legend()
-    
-    # savefig('./figures/AC_Apr18_15', crop = False)
+    plt.show()
+
+    # Save figure
+    savefig('./figures/AC_Apr18_15', crop = False)
