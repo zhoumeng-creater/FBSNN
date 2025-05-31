@@ -101,6 +101,7 @@ if __name__ == "__main__":
     plt.xlabel('$t$')
     plt.ylabel('relative error')
     plt.title('100-dimensional Hamilton-Jacobi-Bellman')
-    # plt.legend()
+    plt.legend()
+    plt.show()
     
-    # savefig('./figures/HJB_Apr18_50_errors', crop = False)
+    savefig('./figures/HJB_Apr18_50_errors', crop = False)

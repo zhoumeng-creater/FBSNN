@@ -99,5 +99,6 @@ if __name__ == "__main__":
     plt.ylabel('relative error')
     plt.title('100-dimensional Black-Scholes-Barenblatt')
     plt.legend()
+    plt.show()
     
-    # savefig('./figures/BSB_Apr18_50_errors', crop = False)
+    savefig('./figures/BSB_Apr18_50_errors', crop = False)
