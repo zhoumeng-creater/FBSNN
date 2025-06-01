@@ -1,6 +1,7 @@
 """
 @author: Maziar Raissi
 Modified for TensorFlow 2 by Meng
+Modified to use Deep BSDE architecture from solver.py
 """
 
 import numpy as np
@@ -8,10 +9,48 @@ import tensorflow as tf
 import time
 from abc import ABC, abstractmethod
 
+DELTA_CLIP = 50.0  # From solver.py
+
+
+class FeedForwardSubNet(tf.keras.Model):
+    """Feed-forward subnet used at each time step (from solver.py)"""
+    def __init__(self, dim, num_hiddens):
+        super(FeedForwardSubNet, self).__init__()
+        
+        self.bn_layers = [
+            tf.keras.layers.BatchNormalization(
+                momentum=0.99,
+                epsilon=1e-6,
+                beta_initializer=tf.random_normal_initializer(0.0, stddev=0.1),
+                gamma_initializer=tf.random_uniform_initializer(0.1, 0.5)
+            )
+            for _ in range(len(num_hiddens) + 2)]
+        
+        self.dense_layers = [tf.keras.layers.Dense(num_hiddens[i],
+                                                   use_bias=False,
+                                                   activation=None)
+                             for i in range(len(num_hiddens))]
+        # final output should be gradient of size dim
+        self.dense_layers.append(tf.keras.layers.Dense(dim, activation=None))
+
+    def call(self, x, training=True):
+        """structure: bn -> (dense -> bn -> relu) * len(num_hiddens) -> dense -> bn"""
+        x = self.bn_layers[0](x, training=training)
+        for i in range(len(self.dense_layers) - 1):
+            x = self.dense_layers[i](x)
+            x = self.bn_layers[i+1](x, training=training)
+            x = tf.nn.relu(x)
+        x = self.dense_layers[-1](x)
+        x = self.bn_layers[-1](x, training=training)
+        return x
+
+
 class FBSNN(ABC): # Forward-Backward Stochastic Neural Network
     def __init__(self, Xi, T,
                        M, N, D,
-                       layers):
+                       layers,  # Kept for compatibility, but not used
+                       num_hiddens=[50, 50, 50],
+                       y_init_range=[-0.5, 0.5]):
         
         self.Xi = Xi # initial point
         self.T = T # terminal time
@@ -20,17 +59,43 @@ class FBSNN(ABC): # Forward-Backward Stochastic Neural Network
         self.N = N # number of time snapshots
         self.D = D # number of dimensions
         
-        # layers
-        self.layers = layers # (D+1) --> 1
+        self.delta_t = T / N
+        self.num_time_interval = N
         
-        # initialize NN
-        self.weights, self.biases = self.initialize_NN(layers)
+        # layers - kept for compatibility but using num_hiddens instead
+        self.layers = layers
+        self.num_hiddens = num_hiddens
+        
+        # Initialize trainable parameters (from solver.py)
+        self.y_init = tf.Variable(
+            tf.random.uniform([1], y_init_range[0], y_init_range[1]),
+            dtype=tf.float32,
+            name='y_init'
+        )
+        self.z_init = tf.Variable(
+            tf.random.uniform([1, D], -0.1, 0.1),
+            dtype=tf.float32,
+            name='z_init'
+        )
+        
+        # Create N-1 subnets with non-shared weights (from solver.py)
+        self.subnet = [FeedForwardSubNet(D, num_hiddens) for _ in range(N-1)]
+        
+        # Collect all trainable variables
+        self.trainable_variables = [self.y_init, self.z_init]
+        for subnet in self.subnet:
+            self.trainable_variables.extend(subnet.trainable_variables)
+        
         # optimizer
-        self.optimizer = tf.keras.optimizers.Adam(learning_rate=1e-3)
+        self.optimizer = tf.keras.optimizers.Adam(learning_rate=1e-3, epsilon=1e-8)
         
         # Convert Xi to tensor
         self.Xi_tensor = tf.constant(self.Xi, dtype=tf.float32)
+        
+        # Time stamps
+        self.time_stamp = np.arange(0, self.num_time_interval) * self.delta_t
     
+    # Kept for compatibility but not used
     def initialize_NN(self, layers):
         weights = []
         biases = []
@@ -64,6 +129,7 @@ class FBSNN(ABC): # Forward-Backward Stochastic Neural Network
     
     @tf.function
     def net_u(self, t, X): # M x 1, M x D
+        # Kept for compatibility but not used
         with tf.GradientTape() as tape:
             tape.watch(X)
             u = self.neural_net(tf.concat([t,X], 1), self.weights, self.biases) # M x 1
@@ -79,62 +145,105 @@ class FBSNN(ABC): # Forward-Backward Stochastic Neural Network
         return tape.gradient(g, X) # M x D
     
     @tf.function
+    def forward_pass(self, dw, x, training=True):
+        """
+        Forward pass using Deep BSDE method (from solver.py)
+        dw: M x D x N
+        x: M x D x (N+1)
+        """
+        all_one_vec = tf.ones(shape=[self.M, 1], dtype=tf.float32)
+        y = all_one_vec * self.y_init
+        z = tf.matmul(all_one_vec, self.z_init)
+        
+        # Time marching (from solver.py)
+        for t in range(0, self.num_time_interval-1):
+            # BSDE: y = y - dt * f(t,x,y,z) + z * dW
+            y = y - self.delta_t * self.phi_tf(
+                tf.constant([[self.time_stamp[t]]], dtype=tf.float32),
+                x[:, :, t], y, z
+            ) + tf.reduce_sum(z * dw[:, :, t], axis=1, keepdims=True)
+            
+            # Update z using subnet
+            z = self.subnet[t](x[:, :, t + 1], training=training) / self.D
+        
+        # Terminal time
+        y = y - self.delta_t * self.phi_tf(
+            tf.constant([[self.time_stamp[-1]]], dtype=tf.float32),
+            x[:, :, -2], y, z
+        ) + tf.reduce_sum(z * dw[:, :, -1], axis=1, keepdims=True)
+        
+        return y
+    
+    @tf.function
     def loss_function(self, t, W, Xi): # M x (N+1) x 1, M x (N+1) x D, 1 x D
-        loss = tf.constant(0., tf.float32)
+        """
+        Loss function based on terminal condition (from solver.py)
+        """
+        # Generate paths
         X_list = []
-        Y_list = []
         
         t0 = t[:,0,:]
         W0 = W[:,0,:]   
         X0 = tf.tile(Xi,[self.M,1]) # M x D
-        Y0, Z0 = self.net_u(t0,X0) # M x 1, M x D
-        
         X_list.append(X0)
-        Y_list.append(Y0)
         
+        # Generate X path and collect dW
+        dW_list = []
         for n in range(0,self.N):
             t1 = t[:,n+1,:]
             W1 = W[:,n+1,:]
-            sigma = self.sigma_tf(t0, X0, Y0)
-            dW = tf.expand_dims(W1 - W0, -1)
-            X1 = X0 + self.mu_tf(t0, X0, Y0, Z0) * (t1 - t0) + tf.squeeze(tf.matmul(sigma, dW), axis=[-1])
-
-            Y1_tilde = Y0 + self.phi_tf(t0, X0, Y0, Z0) * (t1 - t0) \
-                        + tf.reduce_sum(
-                            Z0 * tf.squeeze(tf.matmul(sigma, dW), axis=[-1]),
-                            axis=1, keepdims=True)
-            Y1, Z1 = self.net_u(t1,X1)
             
-            loss += tf.reduce_sum(tf.square(Y1 - Y1_tilde))
+            # Placeholder Y and Z for path generation
+            Y_temp = tf.zeros([self.M, 1])
+            Z_temp = tf.zeros([self.M, self.D])
+            
+            # Calculate dW
+            dW = W1 - W0
+            dW_list.append(dW)
+            
+            # Update X
+            sigma = self.sigma_tf(t0, X0, Y_temp)
+            dW_expanded = tf.expand_dims(dW, -1)
+            X1 = X0 + self.mu_tf(t0, X0, Y_temp, Z_temp) * (t1 - t0) + \
+                 tf.squeeze(tf.matmul(sigma, dW_expanded), axis=[-1])
+            
+            X_list.append(X1)
             
             t0 = t1
             W0 = W1
             X0 = X1
-            Y0 = Y1
-            Z0 = Z1
-            
-            X_list.append(X0)
-            Y_list.append(Y0)
-            
-        loss += tf.reduce_sum(tf.square(Y1 - self.g_tf(X1)))
-        loss += tf.reduce_sum(tf.square(Z1 - self.Dg_tf(X1)))
-
-        X = tf.stack(X_list,axis=1)
-        Y = tf.stack(Y_list,axis=1)
         
-        return loss, X, Y, Y[0,0,0]
+        # Prepare data in correct format
+        X = tf.stack(X_list, axis=2)  # M x D x (N+1)
+        dW = tf.stack(dW_list, axis=2)  # M x D x N
+        
+        # Forward pass
+        y_terminal = self.forward_pass(dW, X, training=True)
+        
+        # Terminal condition loss (from solver.py)
+        delta = y_terminal - self.g_tf(X[:, :, -1])
+        # Use linear approximation outside the clipped range
+        loss = tf.reduce_mean(tf.where(tf.abs(delta) < DELTA_CLIP, 
+                                      tf.square(delta),
+                                      2 * DELTA_CLIP * tf.abs(delta) - DELTA_CLIP ** 2))
+        
+        # For compatibility, return additional values
+        X_return = tf.transpose(X, [0, 2, 1])  # M x (N+1) x D
+        Y_return = tf.zeros([self.M, self.N+1, 1])  # Placeholder
+        Y0_return = self.y_init[0]
+        
+        return loss, X_return, Y_return, Y0_return
     
     @tf.function
     def train_step(self, Xi, t_batch, W_batch, learning_rate):
-        trainable_vars = self.weights + self.biases
         
         with tf.GradientTape() as tape:
             loss, X_pred, Y_pred, Y0_pred = self.loss_function(t_batch, W_batch, Xi)
         
-        grads = tape.gradient(loss, trainable_vars)
+        grads = tape.gradient(loss, self.trainable_variables)
         grads, _ = tf.clip_by_global_norm(grads, 10.0)  #防止梯度爆炸
         self.optimizer.learning_rate.assign(learning_rate)
-        self.optimizer.apply_gradients(zip(grads, trainable_vars))
+        self.optimizer.apply_gradients(zip(grads, self.trainable_variables))
         
         return loss, Y0_pred
 
